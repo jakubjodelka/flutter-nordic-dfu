@@ -1,17 +1,20 @@
 package com.timeyaa.flutternordicdfu;
 
+import android.app.Activity;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
+import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
@@ -22,9 +25,9 @@ import no.nordicsemi.android.dfu.DfuServiceController;
 import no.nordicsemi.android.dfu.DfuServiceInitiator;
 import no.nordicsemi.android.dfu.DfuServiceListenerHelper;
 
-public class FlutterNordicDfuPlugin implements MethodCallHandler {
+public class FlutterNordicDfuPlugin implements MethodCallHandler, FlutterPlugin {
 
-    private String TAG = "FlutterNordicDfuPlugin";
+    public static String TAG = "FlutterNordicDfuPlugin";
 
     private String NAMESPACE = "com.timeyaa.flutter_nordic_dfu";
 
@@ -52,16 +55,30 @@ public class FlutterNordicDfuPlugin implements MethodCallHandler {
 
     private boolean hasCreateNotification = false;
 
-    private FlutterNordicDfuPlugin(Registrar registrar) {
-        this.mContext = registrar.context();
-        this.channel = new MethodChannel(registrar.messenger(), NAMESPACE + "/method");
-        this.registrar = registrar;
+    public void initInstance(BinaryMessenger messenger, Context context) {
+        this.mContext = context;
+        this.channel = new MethodChannel(messenger, NAMESPACE + "/method");
         channel.setMethodCallHandler(this);
+        DfuServiceListenerHelper.registerProgressListener(mContext, mDfuProgressListener);
     }
 
     public static void registerWith(Registrar registrar) {
-        FlutterNordicDfuPlugin instance = new FlutterNordicDfuPlugin(registrar);
-        DfuServiceListenerHelper.registerProgressListener(registrar.context(), instance.mDfuProgressListener);
+        FlutterNordicDfuPlugin instance = new FlutterNordicDfuPlugin();
+        instance.registrar = registrar;
+        instance.initInstance(registrar.messenger(), registrar.context());
+    }
+
+    @Override
+    public void onAttachedToEngine(FlutterPluginBinding binding) {
+        initInstance(binding.getBinaryMessenger(), binding.getApplicationContext());
+    }
+
+    @Override
+    public void onDetachedFromEngine(FlutterPluginBinding binding) {
+        if (channel != null) {
+            channel.setMethodCallHandler(null);
+            channel = null;
+        }
     }
 
     @Override
@@ -101,7 +118,7 @@ public class FlutterNordicDfuPlugin implements MethodCallHandler {
             }
 
             pendingResult = result;
-            startDfu(address, name, filePath, forceDfu, enableUnsafeExperimentalButtonlessServiceInSecureDfu, disableNotification, keepBond, packetReceiptNotificationsEnabled, restoreBond, startAsForegroundService, result,numberOfPackets,enablePRNs);
+            startDfu(address, name, filePath, forceDfu, enableUnsafeExperimentalButtonlessServiceInSecureDfu, disableNotification, keepBond, packetReceiptNotificationsEnabled, restoreBond, startAsForegroundService, result, numberOfPackets, enablePRNs);
         } else if (call.method.equals("abortDfu")) {
             if (controller != null) {
                 controller.abort();
@@ -114,14 +131,14 @@ public class FlutterNordicDfuPlugin implements MethodCallHandler {
     /**
      * Start Dfu
      */
-    private void startDfu(String address, @Nullable String name, String filePath, Boolean forceDfu, Boolean enableUnsafeExperimentalButtonlessServiceInSecureDfu, Boolean disableNotification, Boolean keepBond, Boolean packetReceiptNotificationsEnabled, Boolean restoreBond, Boolean startAsForegroundService, Result result,Integer numberOfPackets,Boolean enablePRNs) {
+    private void startDfu(String address, @Nullable String name, String filePath, Boolean forceDfu, Boolean enableUnsafeExperimentalButtonlessServiceInSecureDfu, Boolean disableNotification, Boolean keepBond, Boolean packetReceiptNotificationsEnabled, Boolean restoreBond, Boolean startAsForegroundService, Result result, Integer numberOfPackets, Boolean enablePRNs) {
 
         DfuServiceInitiator starter = new DfuServiceInitiator(address)
                 .setZip(filePath)
                 .setKeepBond(true)
-                .setForceDfu(forceDfu == null ? false:forceDfu)
-                .setPacketsReceiptNotificationsEnabled(enablePRNs == null ? Build.VERSION.SDK_INT < Build.VERSION_CODES.M:enablePRNs)
-                .setPacketsReceiptNotificationsValue(numberOfPackets== null ? -1 :numberOfPackets)
+                .setForceDfu(forceDfu == null ? false : forceDfu)
+                .setPacketsReceiptNotificationsEnabled(enablePRNs == null ? Build.VERSION.SDK_INT < Build.VERSION_CODES.M : enablePRNs)
+                .setPacketsReceiptNotificationsValue(numberOfPackets == null ? -1 : numberOfPackets)
                 .setPrepareDataObjectDelay(400)
                 .setUnsafeExperimentalButtonlessServiceInSecureDfuEnabled(true);
         if (name != null) {
@@ -217,7 +234,6 @@ public class FlutterNordicDfuPlugin implements MethodCallHandler {
                 pendingResult = null;
             }
 
-
             channel.invokeMethod("onDfuAborted", deviceAddress);
         }
 
@@ -230,7 +246,6 @@ public class FlutterNordicDfuPlugin implements MethodCallHandler {
                 pendingResult.success(deviceAddress);
                 pendingResult = null;
             }
-
 
             channel.invokeMethod("onDfuCompleted", deviceAddress);
         }
@@ -260,7 +275,14 @@ public class FlutterNordicDfuPlugin implements MethodCallHandler {
         }
 
         @Override
-        public void onProgressChanged(@NonNull final String deviceAddress, final int percent, final float speed, final float avgSpeed, final int currentPart, final int partsTotal) {
+        public void onProgressChanged(
+                @NonNull final String deviceAddress,
+                final int percent,
+                final float speed,
+                final float avgSpeed,
+                final int currentPart,
+                final int partsTotal
+        ) {
             super.onProgressChanged(deviceAddress, percent, speed, avgSpeed, currentPart, partsTotal);
 
             Map<String, Object> paras = new HashMap<String, Object>() {{
@@ -281,7 +303,11 @@ public class FlutterNordicDfuPlugin implements MethodCallHandler {
         new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
-                final NotificationManager manager = (NotificationManager) registrar.activity().getSystemService(Context.NOTIFICATION_SERVICE);
+                if (registrar == null) return;
+
+                final Activity act = registrar.activity();
+                if (act == null) return;
+                final NotificationManager manager = (NotificationManager) act.getSystemService(Context.NOTIFICATION_SERVICE);
                 if (manager != null)
                     manager.cancel(DfuService.NOTIFICATION_ID);
             }
